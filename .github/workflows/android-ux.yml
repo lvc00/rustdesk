@@ -1,7 +1,7 @@
 name: Android UX Build
 
-# 路线 A：不编译 Rust，复用官方 APK 内的 librustdesk.so
-# 适用：只改 flutter/lib 下的交互层（手势、悬浮球、键盘、缩放）
+# 路线 A：不编译 Rust core（复用官方 APK 内的 librustdesk.so）
+# 但 build.gradle 配置阶段会执行 `cargo metadata`，因此仍需 cargo + 完整子模块
 # 基线：RustDesk 1.5.3 + Flutter 3.24.5
 
 on:
@@ -43,6 +43,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # libs/ 下是子模块，cargo metadata 需要它们，否则 exit 101
+          submodules: recursive
+          fetch-depth: 1
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -56,6 +60,9 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+
+      - name: Setup Rust (cargo only)
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Gradle cache
         uses: actions/cache@v4
