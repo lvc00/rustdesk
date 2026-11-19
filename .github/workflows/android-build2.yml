@@ -1,0 +1,207 @@
+name: Android Build v2
+
+# Dart-only build: reuse official librustdesk.so, regenerate FRB bridge.
+# Baseline: rustdesk 1.5.3 / flutter 3.24.5 / flutter_rust_bridge 1.80.1
+
+on:
+  push:
+    branches:
+      - ui-ux
+    paths:
+      - 'flutter/lib/**'
+      - '.github/workflows/android-build2.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'official rustdesk version providing librustdesk.so'
+        required: true
+        default: '1.5.3'
+      abi:
+        description: 'target abi'
+        type: choice
+        default: 'arm64-v8a'
+        options:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86_64
+
+env:
+  FLUTTER_VERSION: '3.24.5'
+  RD_VERSION: '1.5.3'
+  RUST_VERSION: '1.75'
+  CARGO_EXPAND_VERSION: '1.0.95'
+  FRB_VERSION: '1.80.1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install codegen system deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang libclang-dev llvm-dev ninja-build pkg-config unzip
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+
+      - name: Cache cargo bins
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-bridge-${{ runner.os }}-${{ env.CARGO_EXPAND_VERSION }}-${{ env.FRB_VERSION }}
+
+      - name: Install codegen tools
+        shell: bash
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup component add rustfmt
+          if ! command -v cargo-expand >/dev/null 2>&1; then
+            cargo install cargo-expand --version ${{ env.CARGO_EXPAND_VERSION }} --locked
+          fi
+          if ! command -v flutter_rust_bridge_codegen >/dev/null 2>&1; then
+            cargo install flutter_rust_bridge_codegen --version ${{ env.FRB_VERSION }} --features "uuid" --locked
+          fi
+          cargo-expand --version
+          flutter_rust_bridge_codegen --version
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('flutter/android/**/*.gradle*') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: pub get
+        working-directory: flutter
+        run: flutter pub get
+
+      - name: Generate flutter_rust_bridge bindings
+        shell: bash
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+          cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
+          ls -l flutter/lib/generated_bridge*.dart src/bridge_generated.rs
+
+      - name: Fetch native libs from official APK
+        shell: bash
+        env:
+          VER: ${{ inputs.version || env.RD_VERSION }}
+          ABI: ${{ inputs.abi || 'arm64-v8a' }}
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/rustdesk/rustdesk/releases/download/${VER}"
+          FOUND=""
+          for n in "rustdesk-${VER}-aarch64-signed.apk" "rustdesk-${VER}-universal-signed.apk" "rustdesk-${VER}-universal.apk" "rustdesk-${VER}-aarch64.apk"; do
+            echo "try $n"
+            if curl -fL --retry 3 --retry-delay 2 -o /tmp/rd.apk "$BASE/$n"; then FOUND="$n"; break; fi
+          done
+          test -n "$FOUND" || { echo "no apk found for $VER"; exit 1; }
+          echo "using $FOUND"
+          rm -rf /tmp/x && mkdir -p /tmp/x
+          unzip -o -q /tmp/rd.apk "lib/${ABI}/*" -d /tmp/x
+          mkdir -p flutter/android/app/src/main/jniLibs/${ABI}
+          cp -v /tmp/x/lib/${ABI}/*.so flutter/android/app/src/main/jniLibs/${ABI}/
+          find flutter/android/app/src/main/jniLibs -name '*.so' -exec ls -lh {} \;
+
+      - name: Build APK
+        working-directory: flutter
+        shell: bash
+        env:
+          ABI: ${{ inputs.abi || 'arm64-v8a' }}
+        run: |
+          set -o pipefail
+          case "$ABI" in
+            arm64-v8a)   T=android-arm64; OUT=app-arm64-v8a-release.apk ;;
+            armeabi-v7a) T=android-arm;   OUT=app-armeabi-v7a-release.apk ;;
+            x86_64)      T=android-x64;   OUT=app-x86_64-release.apk ;;
+          esac
+          sed -i "s/signingConfigs.release/signingConfigs.debug/g" android/app/build.gradle
+          sed -i "s/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g" android/gradle.properties
+          grep -n "signingConfig" android/app/build.gradle || true
+          flutter build apk --release --target-platform "$T" --split-per-abi 2>&1 | tee /tmp/build.log
+          ls -l build/app/outputs/flutter-apk/
+          test -f "build/app/outputs/flutter-apk/$OUT"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-ux-apk
+          path: flutter/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload generated bridge
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-bridge
+          path: |
+            flutter/lib/generated_bridge.dart
+            src/bridge_generated.rs
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish build log
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -rf /tmp/lg && mkdir -p /tmp/lg && cd /tmp/lg
+          {
+            echo "### job status: ${{ job.status }}"
+            echo
+            echo "### versions"
+            flutter --version || true
+            java -version 2>&1 || true
+            echo
+            echo "### jniLibs"
+            find "$GITHUB_WORKSPACE/flutter/android/app/src/main/jniLibs" -name '*.so' -exec ls -lh {} \; || true
+            echo
+            echo "### build log"
+            tail -n 300 /tmp/build.log 2>/dev/null || echo "NO BUILD LOG"
+          } > diag.txt
+          git init -q .
+          git add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "ci log"
+          git push -f "https://x-access-token:${TOKEN}@github.com/lvc00/rustdesk.git" HEAD:refs/heads/ci-log
