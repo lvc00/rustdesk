@@ -1,4 +1,5 @@
 import 'package:flutter/gestures.dart';
+import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter/widgets.dart';
 
 import 'package:flutter_hbb/models/input_model.dart';
