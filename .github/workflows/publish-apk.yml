@@ -1,0 +1,74 @@
+name: Publish APK
+
+# Copies the APK of the latest successful Android Build v2 run into a GitHub
+# Release, so the file can be downloaded without a logged-in session.
+
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  GH_REPO: ${{ github.repository }}
+  SRC_WORKFLOW: android-build2.yml
+  SRC_BRANCH: ui-ux
+  ASSET: rustdesk-1.5.3-ux-arm64-v8a.apk
+  TAG: ux-latest
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Resolve source run
+        id: src
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          RID=$(gh api "repos/${GH_REPO}/actions/workflows/${SRC_WORKFLOW}/runs?branch=${SRC_BRANCH}&status=success&per_page=1" --jq '.workflow_runs[0].id')
+          echo "source run: ${RID}"
+          test -n "${RID}"
+          test "${RID}" != "null"
+          echo "run_id=${RID}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RID: ${{ steps.src.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          AID=$(gh api "repos/${GH_REPO}/actions/runs/${RID}/artifacts" --jq '.artifacts[] | select(.name=="rustdesk-ux-apk") | .id' | head -1)
+          echo "artifact: ${AID}"
+          test -n "${AID}"
+          gh api "repos/${GH_REPO}/actions/artifacts/${AID}/zip" > out/apk.zip
+          cd out
+          unzip -o -q apk.zip
+          ls -lh
+          FOUND=$(find . -name '*.apk' | head -1)
+          echo "apk: ${FOUND}"
+          test -n "${FOUND}"
+          cp "${FOUND}" "../${ASSET}"
+          cd ..
+          ls -lh "${ASSET}"
+
+      - name: Publish to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RID: ${{ steps.src.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release exists"
+          else
+            gh release create "$TAG" --title "RustDesk UX build" \
+              --notes "Patched Android client with a raw trackpad gesture layer. Source build run: ${RID}."
+          fi
+          gh release upload "$TAG" "$ASSET" --clobber
+          gh release view "$TAG" --json assets --jq '.assets[] | .name'
