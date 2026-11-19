@@ -4,6 +4,9 @@ name: Publish APK
 # downloaded without authentication (artifacts require a logged-in session).
 
 on:
+  push:
+    paths:
+      - '.github/workflows/publish-apk.yml'
   workflow_dispatch:
     inputs:
       run_id:
