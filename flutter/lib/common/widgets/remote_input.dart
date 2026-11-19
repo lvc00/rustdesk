@@ -120,7 +120,7 @@ class _RawTouchGestureDetectorRegionState
 
   @override
   Widget build(BuildContext context) {
-    return RawGestureDetector(RawTrackpadLayer(
+        return RawTrackpadLayer(
       ffi: ffi,
       handleTouch: handleTouch,
       child: widget.child,
