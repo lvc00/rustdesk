@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/common/widgets/raw_trackpad.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -119,9 +120,11 @@ class _RawTouchGestureDetectorRegionState
 
   @override
   Widget build(BuildContext context) {
-    return RawGestureDetector(
+    return RawGestureDetector(RawTrackpadLayer(
+      ffi: ffi,
+      handleTouch: handleTouch,
       child: widget.child,
-      gestures: makeGestures(context),
+      nativeGestures: makeGestures(context),
     );
   }
 
