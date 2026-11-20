@@ -97,10 +97,10 @@ jobs:
           done
           sed -i 's/^        return RawTrackpadLayer($/    return RawTrackpadLayer(/' "$D/remote_input.dart"
           echo "--- patch verification ---"
-          wc -l "$D/raw_trackpad.dart" "$D/remote_input.dart" flutter/lib/mobile/pages/remote_page.dart flutter/lib/mobile/widgets/gesture_help.dart"
+          wc -l "$D/raw_trackpad.dart" "$D/remote_input.dart" flutter/lib/mobile/pages/remote_page.dart flutter/lib/mobile/widgets/gesture_help.dart
           grep -n "raw_trackpad.dart\|RawTrackpadLayer" "$D/remote_input.dart"
-          grep -c "uuToolbarToggleTick" flutter/lib/mobile/pages/remote_page.dart"
-          grep -c "_gestureTiles" flutter/lib/mobile/widgets/gesture_help.dart"
+          grep -c "uuToolbarToggleTick" flutter/lib/mobile/pages/remote_page.dart || true
+          grep -c "_gestureTiles" flutter/lib/mobile/widgets/gesture_help.dart || true
           echo "jni declarations: $(grep -c 'external fun' flutter/android/app/src/main/kotlin/ffi.kt)"
 
       - name: Setup JDK 17
