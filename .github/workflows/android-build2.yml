@@ -18,8 +18,7 @@ on:
     branches:
       - ui-ux
     paths:
-      - 'flutter/lib/**'
-      - '.github/workflows/android-build2.yml'
+      - 'docs/never-trigger'
   workflow_dispatch:
     inputs:
       version:
@@ -82,17 +81,25 @@ jobs:
         run: |
           set -euo pipefail
           D=flutter/lib/common/widgets
-          for f in raw_trackpad.dart remote_input.dart; do
+          # Full repo-relative paths: the gesture layer plus the two mobile UI
+          # files restyled UU-style (bottom bar) and the gesture cheat sheet.
+          FILES="flutter/lib/common/widgets/raw_trackpad.dart
+flutter/lib/common/widgets/remote_input.dart
+flutter/lib/mobile/pages/remote_page.dart
+flutter/lib/mobile/widgets/gesture_help.dart"
+          for f in $FILES; do
             curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github.raw+json" \
-              "https://api.github.com/repos/$REPO/contents/$D/$f?ref=ui-ux" \
-              -o "$D/$f"
+              "https://api.github.com/repos/$REPO/contents/$f?ref=ui-ux" \
+              -o "$f"
           done
           sed -i 's/^        return RawTrackpadLayer($/    return RawTrackpadLayer(/' "$D/remote_input.dart"
           echo "--- patch verification ---"
-          wc -l "$D/raw_trackpad.dart" "$D/remote_input.dart"
+          wc -l "$D/raw_trackpad.dart" "$D/remote_input.dart" flutter/lib/mobile/pages/remote_page.dart flutter/lib/mobile/widgets/gesture_help.dart"
           grep -n "raw_trackpad.dart\|RawTrackpadLayer" "$D/remote_input.dart"
+          grep -c "uuToolbarToggleTick" flutter/lib/mobile/pages/remote_page.dart"
+          grep -c "_gestureTiles" flutter/lib/mobile/widgets/gesture_help.dart"
           echo "jni declarations: $(grep -c 'external fun' flutter/android/app/src/main/kotlin/ffi.kt)"
 
       - name: Setup JDK 17
@@ -215,12 +222,16 @@ jobs:
             echo "raw_trackpad useRawTrackpadLayer: $(grep -n 'useRawTrackpadLayer = ' $D/raw_trackpad.dart || true)"
           fi
           echo "=== re-apply P1 right before compile ==="
-          for f in raw_trackpad.dart remote_input.dart; do
+          FILES="common/widgets/raw_trackpad.dart
+common/widgets/remote_input.dart
+mobile/pages/remote_page.dart
+mobile/widgets/gesture_help.dart"
+          for f in $FILES; do
             curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github.raw+json" \
-              "https://api.github.com/repos/$REPO/contents/flutter/$D/$f?ref=ui-ux" \
-              -o "$D/$f"
+              "https://api.github.com/repos/$REPO/contents/flutter/lib/$f?ref=ui-ux" \
+              -o "lib/$f"
           done
           sed -i 's/^        return RawTrackpadLayer($/    return RawTrackpadLayer(/' $D/remote_input.dart
           echo "after re-patch RawTrackpadLayer refs: $(grep -c 'RawTrackpadLayer' $D/remote_input.dart)"
