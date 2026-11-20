@@ -18,7 +18,8 @@ on:
     branches:
       - ui-ux
     paths:
-      - 'docs/never-trigger'
+      - 'flutter/lib/**'
+      - '.github/workflows/android-build2.yml'
   workflow_dispatch:
     inputs:
       version:
