@@ -2,8 +2,8 @@ name: Setup 153
 
 # Rebuild the UX patch on the real tag 1.5.3 (that tag's ffi.kt declares exactly
 # the 16 JNI symbols the official librustdesk.so exposes). Pushes branch
-# ui-ux-153, and mirrors this job's log to branch setup-log so failures can be
-# read as plain text from raw.githubusercontent.com.
+# ui-ux-153, and mirrors every step's output to branch setup-log so failures can
+# be read as plain text from raw.githubusercontent.com.
 
 on:
   push:
@@ -17,67 +17,114 @@ permissions:
 jobs:
   setup:
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
-      - name: Rebase UX patch onto tag 1.5.3
+      - name: Probe network
+        shell: bash
+        run: |
+          set -euo pipefail
+          L="$RUNNER_TEMP/setup.log"; : > "$L"
+          {
+            echo "== probe =="
+            git --version
+            python3 -V
+            curl -sS -o /dev/null -w "uiux raw_trackpad %{http_code}\n" "https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux/flutter/lib/common/widgets/raw_trackpad.dart"
+            curl -sS -o /dev/null -w "uiux remote_input %{http_code}\n" "https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux/flutter/lib/common/widgets/remote_input.dart"
+            curl -sS -o /dev/null -w "uiux build wf %{http_code}\n" "https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux/.github/workflows/android-build2.yml"
+            curl -sS -o /dev/null -w "tag ffi.kt %{http_code}\n" "https://raw.githubusercontent.com/rustdesk/rustdesk/1.5.3/flutter/android/app/src/main/kotlin/ffi.kt"
+          } 2>&1 | tee -a "$L"
+
+      - name: Clone tag 1.5.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          L="$RUNNER_TEMP/setup.log"
+          {
+            set -x
+            rm -rf up; mkdir up; cd up
+            git init -q .
+            git remote add src https://github.com/rustdesk/rustdesk.git
+            git fetch --depth 1 src refs/tags/1.5.3
+            git checkout FETCH_HEAD
+            git rev-parse --short HEAD
+            git checkout --orphan ui-ux-153
+            set +x
+          } 2>&1 | tee -a "$L"
+
+      - name: Apply patch files
+        shell: bash
+        run: |
+          set -euo pipefail
+          L="$RUNNER_TEMP/setup.log"
+          {
+            set -x
+            cd up
+            RAW=https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o flutter/lib/common/widgets/raw_trackpad.dart "$RAW/flutter/lib/common/widgets/raw_trackpad.dart"
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o flutter/lib/common/widgets/remote_input.dart "$RAW/flutter/lib/common/widgets/remote_input.dart"
+            sed -i 's#^        return RawTrackpadLayer($#    return RawTrackpadLayer(#' flutter/lib/common/widgets/remote_input.dart
+            set +x
+            echo "--- local sizes ---"
+            wc -l flutter/lib/common/widgets/raw_trackpad.dart flutter/lib/common/widgets/remote_input.dart
+            sed -n '118,127p' flutter/lib/common/widgets/remote_input.dart
+            grep -n "raw_trackpad" flutter/lib/common/widgets/remote_input.dart
+          } 2>&1 | tee -a "$L"
+
+      - name: Patch build workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          L="$RUNNER_TEMP/setup.log"
+          {
+            set -x
+            cd up
+            RAW=https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux
+            rm -rf .github/workflows
+            mkdir -p .github/workflows
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o .github/workflows/android-build2.yml "$RAW/.github/workflows/android-build2.yml"
+            sed -i 's#^      - ui-ux$#      - ui-ux-153#' .github/workflows/android-build2.yml
+            sed -i 's#^          git init -q \.$#          A=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk 2>/dev/null | head -1); if [ -n "$A" ]; then cp "$A" ./rustdesk-ux.apk; GH_TOKEN="$TOKEN" GH_REPO=lvc00/rustdesk gh release upload ux-latest ./rustdesk-ux.apk --clobber || true; fi\n          git init -q .#' .github/workflows/android-build2.yml
+            set +x
+            echo "--- patched workflow ---"
+            grep -n "ui-ux-153" .github/workflows/android-build2.yml || echo "WARN branch tag missing"
+            grep -n "rustdesk-ux.apk" .github/workflows/android-build2.yml || echo "WARN apk hook missing"
+            python3 -c "import yaml;yaml.safe_load(open('.github/workflows/android-build2.yml'));print('YAML OK')" || echo "WARN yaml check failed"
+          } 2>&1 | tee -a "$L"
+
+      - name: Commit and push branch
         shell: bash
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -uo pipefail
-          LOG=/tmp/setup.log
-          REPO="https://x-access-token:${TOKEN}@github.com/lvc00/rustdesk.git"
-
-          publish_log() {
-            ( rm -rf /tmp/lg; mkdir -p /tmp/lg; cp "$LOG" /tmp/lg/setup.log
-              cd /tmp/lg
-              git init -q .
-              git add -A
-              git -c user.name=ci -c user.email=ci@localhost commit -qm log
-              git push -f "$REPO" HEAD:refs/heads/setup-log ) >>"$LOG" 2>&1 || echo "log push failed"
-          }
-
-          main() {
-            set -e
-            SRC=https://github.com/rustdesk/rustdesk.git
-            RAW=https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux
-
-            rm -rf up; mkdir up; cd up
-            git init -q .
-            git remote add src "$SRC"
-            git fetch --depth 1 src refs/tags/1.5.3
-            git checkout FETCH_HEAD
-            echo "base: $(git rev-parse --short FETCH_HEAD)"
-            git checkout --orphan ui-ux-153
-
-            rm -rf .github/workflows
-            mkdir -p .github/workflows
-
-            curl -fsSL -o flutter/lib/common/widgets/raw_trackpad.dart "$RAW/flutter/lib/common/widgets/raw_trackpad.dart"
-            curl -fsSL -o flutter/lib/common/widgets/remote_input.dart "$RAW/flutter/lib/common/widgets/remote_input.dart"
-            sed -i 's#^        return RawTrackpadLayer($#    return RawTrackpadLayer(#' flutter/lib/common/widgets/remote_input.dart
-
-            curl -fsSL -o .github/workflows/android-build2.yml "$RAW/.github/workflows/android-build2.yml"
-            sed -i 's#^      - ui-ux$#      - ui-ux-153#' .github/workflows/android-build2.yml
-            sed -i 's#^          git init -q \.$#          A=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk 2>/dev/null | head -1); if [ -n "$A" ]; then cp "$A" ./rustdesk-ux.apk; GH_TOKEN="$TOKEN" GH_REPO=lvc00/rustdesk gh release upload ux-latest ./rustdesk-ux.apk --clobber || true; fi\n          git init -q .#' .github/workflows/android-build2.yml
-
-            echo "--- checks ---"
-            grep -n "ui-ux-153" .github/workflows/android-build2.yml || echo "WARN branch tag missing"
-            grep -n "rustdesk-ux.apk" .github/workflows/android-build2.yml || echo "WARN apk hook missing"
-            wc -l flutter/lib/common/widgets/raw_trackpad.dart flutter/lib/common/widgets/remote_input.dart
-            sed -n '120,128p' flutter/lib/common/widgets/remote_input.dart
-            python3 -c "import yaml;yaml.safe_load(open('.github/workflows/android-build2.yml'));print('YAML OK')" || echo "WARN yaml check failed"
-
+          set -euo pipefail
+          L="$RUNNER_TEMP/setup.log"
+          {
+            set -x
+            cd up
             git config user.name ci
             git config user.email ci@localhost
             git add -A
+            git status --short | head -20
             git commit -qm "feat(ux): raw trackpad layer on tag 1.5.3"
-            git push -f "$REPO" HEAD:refs/heads/ui-ux-153
-            echo "pushed $(git rev-parse --short HEAD)"
-          }
+            git log --oneline -1
+            git push -f "https://x-access-token:${TOKEN}@github.com/lvc00/rustdesk.git" HEAD:refs/heads/ui-ux-153
+            set +x
+            echo "pushed ok"
+          } 2>&1 | tee -a "$L"
 
-          main 2>&1 | tee "$LOG"
-          rc=${PIPESTATUS[0]}
-          echo "=== main exit: $rc ==="
-          publish_log
-          exit $rc
+      - name: Publish log
+        if: always()
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          L="$RUNNER_TEMP/setup.log"
+          rm -rf /tmp/lg2; mkdir -p /tmp/lg2
+          cp "$L" /tmp/lg2/setup.log 2>/dev/null || echo "no log file" > /tmp/lg2/setup.log
+          echo "job=${{ job.status }} sha=${{ github.sha }}" >> /tmp/lg2/setup.log
+          cd /tmp/lg2
+          git init -q .
+          git add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm log
+          git push -f "https://x-access-token:${TOKEN}@github.com/lvc00/rustdesk.git" HEAD:refs/heads/setup-log
+          echo "log published"
