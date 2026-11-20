@@ -237,9 +237,10 @@ jobs:
           # Flutter sometimes ends the CLI with a ToolExit (rc=2) after printing
           # "Built ..." because of its file watcher ("Already watching path").
           # The APK is fine in that case, so judge by the artifact instead of the
-          # exit code - but only after wiping stale outputs, so a real compile
-          # error cannot be masked by a cached APK from an earlier step.
-          rm -rf build/app/outputs/flutter-apk/*.apk 2>/dev/null || true
+          # exit code. Do NOT delete the output dir: that makes Gradle think
+          # assembleRelease is up to date and skip packaging entirely.
+          MARK=/tmp/apk_marker
+          touch "$MARK"
           set +e
           flutter build apk --release --target-platform "$T" --split-per-abi 2>&1 | tee /tmp/build.log
           RC=${PIPESTATUS[0]}
@@ -248,11 +249,15 @@ jobs:
           ls -l build/app/outputs/flutter-apk/ || true
           if [ ! -f "build/app/outputs/flutter-apk/$OUT" ]; then
             echo "=== BUILD FAILED: APK was not produced ==="
-            tail -150 /tmp/build.log
+            tail -120 /tmp/build.log || true
+            echo "::error::APK missing after flutter build (rc=$RC)"
+            grep -a -m3 -E "Error|error:|FAILURE|What went wrong" /tmp/build.log | sed 's/^/::error::/' || true
             exit 1
           fi
+          if [ "build/app/outputs/flutter-apk/$OUT" -ot "$MARK" ]; then
+            echo "::warning::APK is older than the build start; Gradle may have skipped packaging"
+          fi
           echo "APK produced: $OUT (flutter rc=$RC)"
-          grep -a "RawTrackpadLayer" /tmp/build.log | head -5 || true
 
       - name: Verify P1 code is inside the APK
         shell: bash
@@ -314,6 +319,9 @@ jobs:
           rm -rf /tmp/lg && mkdir -p /tmp/lg && cd /tmp/lg
           {
             echo "### job status: ${{ job.status }}"
+            echo
+            echo "### run: ${{ github.run_id }} / attempt ${{ github.run_attempt }} at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "### sha: ${{ github.sha }}"
             echo
             echo "### baseline: upstream tag 1.5.3 / 16 JNI declarations"
             echo
