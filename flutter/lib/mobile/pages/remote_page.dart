@@ -17,6 +17,7 @@ import 'package:provider/provider.dart';
 import '../../common.dart';
 import '../../common/widgets/overlay.dart';
 import '../../common/widgets/dialog.dart';
+import '../../common/widgets/raw_trackpad.dart';
 import '../../common/widgets/remote_input.dart';
 import '../../models/input_model.dart';
 import '../../models/model.dart';
@@ -168,6 +169,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       }
     });
     WidgetsBinding.instance.addObserver(this);
+    uuToolbarToggleTick.addListener(_onUuToolbarTick);
 
     inputModel.keyboardInputAllowed = true;
 
@@ -187,6 +189,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   Future<void> dispose() async {
     HardwareKeyboard.instance.removeHandler(_handleLocalKeyEvent);
+    uuToolbarToggleTick.removeListener(_onUuToolbarTick);
     WidgetsBinding.instance.removeObserver(this);
     // Close the session up-front. `gFFI.close()` below only calls `sessionClose`
     // after several awaits (canvas save, image update, the `enable_soft_keyboard`
@@ -602,101 +605,113 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     );
   }
 
+  /// Three finger tap from the raw gesture layer shows / hides this bar.
+  void _onUuToolbarTick() {
+    if (!mounted) return;
+    setState(() {
+      _showGestureHelp = false;
+      _showBar = !_showBar;
+    });
+  }
+
+  /// One icon + label cell of the UU style bottom bar.
+  Widget _uuBarButton({
+    required IconData icon,
+    required String label,
+    VoidCallback? onTap,
+  }) {
+    final enabled = onTap != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 21, color: enabled ? Colors.white : Colors.white24),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: enabled ? Colors.white70 : Colors.white24,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// UU Remote style bottom bar: a floating rounded dark strip with icon +
+  /// label cells instead of the stock full width accent BottomAppBar.
   Widget getBottomAppBar() {
     final ffiModel = Provider.of<FfiModel>(context);
-    return BottomAppBar(
-      elevation: 10,
-      color: MyTheme.accent,
-      child: Row(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: <Widget>[
-          Row(
+    final canKeyboard = !isWebDesktop && !ffiModel.viewOnly && ffiModel.keyboard;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xF21F2124),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 16,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 58,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: <Widget>[
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.clear),
-                      onPressed: () {
-                        clientClose(sessionId, gFFI);
-                      },
-                    ),
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.tv),
-                      onPressed: () {
-                        setState(() => _showEdit = false);
-                        showOptions(context, widget.id, gFFI.dialogManager);
-                      },
-                    )
-                  ] +
-                  (isWebDesktop || ffiModel.viewOnly || !ffiModel.keyboard
-                      ? []
-                      : gFFI.ffiModel.isPeerAndroid
-                          ? [
-                              IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.keyboard),
-                                  onPressed: openKeyboard),
-                              IconButton(
-                                color: Colors.white,
-                                icon: const Icon(Icons.build),
-                                onPressed: () => gFFI.dialogManager
-                                    .toggleMobileActionsOverlay(ffi: gFFI),
-                              )
-                            ]
-                          : [
-                              IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.keyboard),
-                                  onPressed: openKeyboard),
-                              IconButton(
-                                color: Colors.white,
-                                icon: Icon(gFFI.ffiModel.touchMode
-                                    ? Icons.touch_app
-                                    : Icons.mouse),
-                                onPressed: () => setState(
-                                    () => _showGestureHelp = !_showGestureHelp),
-                              ),
-                            ]) +
-                  (isWeb
-                      ? []
-                      : <Widget>[
-                          futureBuilder(
-                              future: gFFI.invokeMethod(
-                                  "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
-                              hasData: (isSupportVoiceCall) => IconButton(
-                                    color: Colors.white,
-                                    icon: isAndroid && isSupportVoiceCall
-                                        ? SvgPicture.asset('assets/chat.svg',
-                                            colorFilter: ColorFilter.mode(
-                                                Colors.white, BlendMode.srcIn))
-                                        : Icon(Icons.message),
-                                    onPressed: () =>
-                                        isAndroid && isSupportVoiceCall
-                                            ? showChatOptions(widget.id)
-                                            : onPressedTextChat(widget.id),
-                                  ))
-                        ]) +
-                  [
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.more_vert),
-                      onPressed: () {
-                        setState(() => _showEdit = false);
-                        showActions(widget.id);
-                      },
-                    ),
-                  ]),
-          Obx(() => IconButton(
-                color: Colors.white,
-                icon: Icon(Icons.expand_more),
-                onPressed: gFFI.ffiModel.waitForFirstImage.isTrue
-                    ? null
-                    : () {
-                        setState(() => _showBar = !_showBar);
-                      },
-              )),
-        ],
+                _uuBarButton(
+                  icon: Icons.power_settings_new,
+                  label: '断开',
+                  onTap: () => clientClose(sessionId, gFFI),
+                ),
+                _uuBarButton(
+                  icon: Icons.keyboard,
+                  label: '键盘',
+                  onTap: canKeyboard ? openKeyboard : null,
+                ),
+                _uuBarButton(
+                  icon: ffiModel.touchMode ? Icons.touch_app : Icons.mouse,
+                  label: '手势',
+                  onTap: () =>
+                      setState(() => _showGestureHelp = !_showGestureHelp),
+                ),
+                _uuBarButton(
+                  icon: Icons.tv,
+                  label: '显示',
+                  onTap: () {
+                    setState(() => _showEdit = false);
+                    showOptions(context, widget.id, gFFI.dialogManager);
+                  },
+                ),
+                if (!isWeb)
+                  _uuBarButton(
+                    icon: Icons.forum_outlined,
+                    label: '聊天',
+                    onTap: () => onPressedTextChat(widget.id),
+                  ),
+                _uuBarButton(
+                  icon: Icons.more_horiz,
+                  label: '更多',
+                  onTap: () {
+                    setState(() => _showEdit = false);
+                    showActions(widget.id);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
