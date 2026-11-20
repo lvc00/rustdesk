@@ -104,7 +104,7 @@ jobs:
             git config user.name ci
             git config user.email ci@localhost
             git add -A
-            git status --short | head -20
+            git status --short > /tmp/st.txt; echo "changed files: $(wc -l < /tmp/st.txt)"; sed -n '1,10p' /tmp/st.txt
             git commit -qm "feat(ux): raw trackpad layer on tag 1.5.3"
             git log --oneline -1
             git push -f "https://x-access-token:${TOKEN}@github.com/lvc00/rustdesk.git" HEAD:refs/heads/ui-ux-153
