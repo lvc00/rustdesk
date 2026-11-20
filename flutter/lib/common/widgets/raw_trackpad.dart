@@ -6,10 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
-import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/input_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
+import 'package:flutter_hbb/native/common.dart'
+    if (dart.library.html) 'package:flutter_hbb/web/common.dart';
 
 /// UU-style touch input layer for the RustDesk Android client.
 ///
@@ -597,7 +598,7 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
   /// refuses to show the IME for *any* text field — that is why tapping the
   /// input box did nothing. Flip it on before requesting focus.
   Future<void> _ensureImeOpen() async {
-    if (isAndroid) {
+    if (isAndroid_) {
       await widget.ffi.invokeMethod('enable_soft_keyboard', true);
     }
     inputModel.keyboardInputAllowed = true;
@@ -615,7 +616,7 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
   void _restoreSoftKeyboardFlag() {
     if (!_imeOpened) return;
     _imeOpened = false;
-    if (isAndroid) {
+    if (isAndroid_) {
       widget.ffi.invokeMethod('enable_soft_keyboard', false);
     }
   }
