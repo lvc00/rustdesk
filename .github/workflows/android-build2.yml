@@ -1,7 +1,12 @@
 name: Android Build v2
 
-# Dart-only build: reuse official librustdesk.so, regenerate FRB bridge.
-# Baseline: rustdesk 1.5.3 / flutter 3.24.5 / flutter_rust_bridge 1.80.1
+# Build the P1 UX patch on the REAL upstream tag 1.5.3.
+# The official 1.5.3 librustdesk.so exports exactly 16 Java_ffi_FFI_* symbols,
+# while master's ffi.kt declares 18 (adds setDocumentLogsEnabled and
+# setInputServiceOpen). Mixing master Kotlin with the 1.5.3 .so caused
+# UnsatisfiedLinkError on startup. So: check out tag 1.5.3, overlay only the
+# two P1 Dart files from ui-ux, regenerate the FRB bridge from 1.5.3's own
+# src/flutter_ffi.rs, and reuse the official 1.5.3 native libs.
 
 on:
   push:
@@ -44,11 +49,46 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     steps:
-      - name: Checkout
+      - name: Checkout upstream tag 1.5.3 (JNI-matched baseline)
         uses: actions/checkout@v4
         with:
+          repository: rustdesk/rustdesk
+          ref: 1.5.3
           submodules: recursive
           fetch-depth: 1
+
+      - name: Verify baseline JNI surface
+        shell: bash
+        run: |
+          echo "baseline commit: $(git rev-parse HEAD)"
+          N=$(grep -c 'external fun' flutter/android/app/src/main/kotlin/ffi.kt)
+          echo "external fun count: $N"
+          test "$N" = "16" || { echo "ERROR: expected 16 JNI declarations (tag 1.5.3)"; exit 1; }
+          if grep -q 'setDocumentLogsEnabled\|setInputServiceOpen' flutter/android/app/src/main/kotlin/ffi.kt; then
+            echo "ERROR: master-only JNI declarations present"; exit 1
+          fi
+          echo "OK: baseline matches official 1.5.3 librustdesk.so"
+
+      - name: Apply P1 UX patch from ui-ux
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          D=flutter/lib/common/widgets
+          for f in raw_trackpad.dart remote_input.dart; do
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github.raw+json" \
+              "https://api.github.com/repos/$REPO/contents/$D/$f?ref=ui-ux" \
+              -o "$D/$f"
+          done
+          sed -i 's/^        return RawTrackpadLayer($/    return RawTrackpadLayer(/' "$D/remote_input.dart"
+          echo "--- patch verification ---"
+          wc -l "$D/raw_trackpad.dart" "$D/remote_input.dart"
+          grep -n "raw_trackpad.dart\|RawTrackpadLayer" "$D/remote_input.dart"
+          echo "jni declarations: $(grep -c 'external fun' flutter/android/app/src/main/kotlin/ffi.kt)"
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -141,6 +181,8 @@ jobs:
           mkdir -p flutter/android/app/src/main/jniLibs/${ABI}
           cp -v /tmp/x/lib/${ABI}/*.so flutter/android/app/src/main/jniLibs/${ABI}/
           find flutter/android/app/src/main/jniLibs -name '*.so' -exec ls -lh {} \;
+          echo "--- JNI symbols in librustdesk.so ---"
+          nm -D --defined-only "flutter/android/app/src/main/jniLibs/${ABI}/librustdesk.so" 2>/dev/null | grep -c 'Java_ffi_FFI_' || true
 
       - name: Build APK
         working-directory: flutter
@@ -169,6 +211,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Publish APK to Release ux-latest
+        if: success()
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          A=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk | head -1)
+          OUT="$RUNNER_TEMP/rustdesk-1.5.3-ux-arm64-v8a.apk"
+          cp "$A" "$OUT"
+          if ! GH_TOKEN="$TOKEN" gh release view ux-latest >/dev/null 2>&1; then
+            GH_TOKEN="$TOKEN" gh release create ux-latest --title "RustDesk UX (1.5.3 baseline)" --notes "Automated UX build on tag 1.5.3"
+          fi
+          GH_TOKEN="$TOKEN" gh release upload ux-latest "$OUT" --clobber
+          echo "published: $(ls -lh "$OUT")"
+
       - name: Upload generated bridge
         if: always()
         uses: actions/upload-artifact@v4
@@ -190,6 +249,8 @@ jobs:
           rm -rf /tmp/lg && mkdir -p /tmp/lg && cd /tmp/lg
           {
             echo "### job status: ${{ job.status }}"
+            echo
+            echo "### baseline: upstream tag 1.5.3 / 16 JNI declarations"
             echo
             echo "### versions"
             flutter --version || true
