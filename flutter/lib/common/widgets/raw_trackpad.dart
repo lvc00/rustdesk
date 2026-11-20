@@ -14,7 +14,7 @@ import 'package:flutter_hbb/models/platform_model.dart';
 ///   one finger move        -> move the remote cursor immediately
 ///   one finger tap         -> left click
 ///   one finger long press  -> right click
-///   double tap + move      -> drag (left button held)
+///   long press then move   -> drag (left button held until release)
 ///   two finger move        -> wheel scroll
 ///   two finger pinch       -> zoom the remote screen
 ///   two finger drag zoomed -> pan the zoomed canvas
@@ -56,9 +56,12 @@ class RawTrackpadLayer extends StatefulWidget {
 class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
   // A tap is decided on pointer up by distance and duration, not by the arena.
   static const double _tapSlop = 14.0;
-  static const int _tapMaxMs = 320;
-  static const int _doubleTapMs = 300;
-  static const int _longPressMs = 500;
+
+  /// Resting a finger this long arms the drag. It does *not* press the left
+  /// button yet: the press happens on the first move after that. Without this
+  /// split, a long press meant as a right click would first fire a left click
+  /// under the finger.
+  static const int _dragArmMs = 350;
   static const double _dragSlop = 4.0;
   static const double _scrollStep = 24.0;
 
@@ -81,12 +84,9 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
 
   final Map<int, Offset> _pointers = <int, Offset>{};
 
-  Offset _downPos = Offset.zero;
   Offset _lastFocal = Offset.zero;
-  Offset _lastTapPos = Offset.zero;
   Offset _globalOffset = Offset.zero;
   int _downTs = 0;
-  int _lastTapTs = 0;
   int _twoStartTs = 0;
   int _maxPointers = 0;
   double _moved = 0;
@@ -102,11 +102,10 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
   double _winSpan = 0;
   double _winFocal = 0;
   bool _dragActive = false;
-  bool _dragPrimed = false;
-  bool _longPressed = false;
+  bool _dragArmed = false;
   bool _threeFinger = false;
   _TwoMode _twoMode = _TwoMode.undecided;
-  Timer? _longPressTimer;
+  Timer? _armTimer;
 
   InputModel get inputModel => widget.ffi.inputModel;
   CanvasModel get canvasModel => widget.ffi.canvasModel;
@@ -115,7 +114,7 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
 
   @override
   void dispose() {
-    _longPressTimer?.cancel();
+    _armTimer?.cancel();
     super.dispose();
   }
 
@@ -164,29 +163,24 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
       _maxPointers = _pointers.length;
       _lastFocal = _focalPoint();
       _lastSpan = _span();
-      _longPressTimer?.cancel();
+      _cancelArm();
       return;
     }
 
     if (_pointers.length == 1) {
-      _downPos = e.localPosition;
       _downTs = _now;
       _lastFocal = e.localPosition;
       _moved = 0;
       _scrollAccum = 0;
       _maxPointers = 1;
       _dragActive = false;
-      _longPressed = false;
+      _dragArmed = false;
       _threeFinger = false;
       _twoMode = _TwoMode.undecided;
-      _longPressTimer?.cancel();
-      _longPressTimer = Timer(const Duration(milliseconds: _longPressMs), () {
-        if (_pointers.length == 1 &&
-            _moved < _tapSlop &&
-            !_dragActive &&
-            !_longPressed) {
-          _longPressed = true;
-          inputModel.tap(MouseButtons.right);
+      _armTimer?.cancel();
+      _armTimer = Timer(const Duration(milliseconds: _dragArmMs), () {
+        if (_pointers.length == 1 && _moved <= _tapSlop && !_dragActive) {
+          _dragArmed = true;
         }
       });
       return;
@@ -195,7 +189,7 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
     if (_pointers.length > _maxPointers) {
       _maxPointers = _pointers.length;
     }
-    _longPressTimer?.cancel();
+    _cancelArm();
     _lastFocal = _focalPoint();
     _lastSpan = _span();
     _spanStart = _lastSpan;
@@ -206,11 +200,15 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
     _twoStartTs = _now;
     _twoMode = _TwoMode.undecided;
     _scrollAccum = 0;
+    _dragArmed = false;
     if (_dragActive) {
       _dragActive = false;
-      _dragPrimed = false;
       inputModel.tapUp(MouseButtons.left);
     }
+  }
+
+  void _cancelArm() {
+    _armTimer?.cancel();
   }
 
   void _onMove(PointerMoveEvent e) {
@@ -224,18 +222,19 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
     }
 
     if (_pointers.length >= 2) {
-      if (_moved > _tapSlop) _longPressTimer?.cancel();
+      if (_moved > _tapSlop) _cancelArm();
       _moveTwoFingers(e.delta.distance);
       return;
     }
 
     // One finger: move the cursor right away, zero slop.
     _moved += e.delta.distance;
-    if (_moved > _tapSlop) _longPressTimer?.cancel();
+    if (_moved > _tapSlop) _cancelArm();
     final pos = e.localPosition;
-    if (_dragPrimed && !_dragActive && _moved > _dragSlop) {
+    if (_dragArmed && !_dragActive && _moved > _dragSlop) {
+      // First real move after the arm: press the left button here, so the
+      // drag starts exactly where the finger was resting.
       _dragActive = true;
-      _dragPrimed = false;
       inputModel.tapDown(MouseButtons.left);
     }
     if (widget.ffi.cursorModel.shouldBlock(pos.dx, pos.dy)) return;
@@ -334,9 +333,10 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
 
   void _onUp(PointerUpEvent e) {
     final held = _now - _downTs;
-    final isTap = _moved <= _tapSlop && held <= _tapMaxMs;
+    final isTap = _moved <= _tapSlop && held < _dragArmMs;
+    final armed = _dragArmed;
     _pointers.remove(e.pointer);
-    _longPressTimer?.cancel();
+    _cancelArm();
 
     if (_threeFinger) {
       if (_pointers.isNotEmpty) return;
@@ -351,32 +351,20 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
 
     if (_dragActive) {
       inputModel.tapUp(MouseButtons.left);
-    } else if (_longPressed) {
-      // right click already sent by the long-press timer
+    } else if (armed) {
+      // Rested without moving: right click. No left button was ever pressed,
+      // so there is nothing to release first.
+      inputModel.tap(MouseButtons.right);
     } else if (isTap) {
-      if (_maxPointers >= 2) {
-        inputModel.tap(MouseButtons.right);
-        _dragPrimed = false;
-        _lastTapTs = 0;
-      } else if (_now - _lastTapTs <= _doubleTapMs &&
-          (_lastTapPos - _downPos).distance < 40) {
-        _dragPrimed = true;
-        _lastTapTs = 0;
-      } else {
-        inputModel.tap(MouseButtons.left);
-        _lastTapTs = _now;
-        _lastTapPos = _downPos;
-        _dragPrimed = false;
-      }
-    } else {
-      _dragPrimed = false;
+      inputModel.tap(
+          _maxPointers >= 2 ? MouseButtons.right : MouseButtons.left);
     }
     _resetGesture();
   }
 
   void _onCancel(PointerCancelEvent e) {
     _pointers.remove(e.pointer);
-    _longPressTimer?.cancel();
+    _cancelArm();
     if (_pointers.isNotEmpty) return;
     if (_dragActive) {
       inputModel.tapUp(MouseButtons.left);
@@ -386,8 +374,7 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
 
   void _resetGesture() {
     _dragActive = false;
-    _dragPrimed = false;
-    _longPressed = false;
+    _dragArmed = false;
     _threeFinger = false;
     _twoMode = _TwoMode.undecided;
     _maxPointers = 0;
