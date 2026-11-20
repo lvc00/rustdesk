@@ -73,6 +73,21 @@ class _GestureHelpState extends State<GestureHelp> {
     }
   }
 
+  /// The gesture cheat sheet. One list for both modes: the raw trackpad layer
+  /// drives the same gestures whether the peer is touched or moused.
+  List<Widget> _gestureTiles(double width) {
+    return <Widget>[
+      GestureInfo(width, GestureIcons.iconMobileTouch, '单指轻点', '鼠标左键'),
+      GestureInfo(width, GestureIcons.iconGesturePressHold, '单指长按', '鼠标右键'),
+      GestureInfo(width, GestureIcons.iconGestureFSwipeRight, '单指滑动', '移动光标'),
+      GestureInfo(width, GestureIcons.iconGestureFDrag, '双击后拖动', '拖拽窗口/文件'),
+      GestureInfo(width, GestureIcons.iconGestureFDragUpDown_, '双指上下滑', '滚轮滚动'),
+      GestureInfo(width, GestureIcons.iconGesturePinch, '双指捏合', '缩放画面'),
+      GestureInfo(width, GestureIcons.iconGestureFDragUpDown_, '双指拖动', '平移画面（放大后）'),
+      GestureInfo(width, GestureIcons.iconGestureFThreeFingers, '三指轻点', '显示/隐藏工具栏'),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -279,71 +294,7 @@ class _GestureHelpState extends State<GestureHelp> {
                     child: Wrap(
                   spacing: space,
                   runSpacing: 2 * space,
-                  children: _touchMode
-                      ? [
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconMobileTouch,
-                              translate("One-Finger Tap"),
-                              translate("Left Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGesturePressHold,
-                              translate("One-Long Tap"),
-                              translate("Right Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFSwipeRight,
-                              translate("One-Finger Move"),
-                              translate("Mouse Drag")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFThreeFingers,
-                              translate("Three-Finger vertically"),
-                              translate("Mouse Wheel")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFDrag,
-                              translate("Two-Finger Move"),
-                              translate("Canvas Move")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGesturePinch,
-                              translate("Pinch to Zoom"),
-                              translate("Canvas Zoom")),
-                        ]
-                      : [
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconMobileTouch,
-                              translate("One-Finger Tap"),
-                              translate("Left Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGesturePressHold,
-                              translate("One-Long Tap"),
-                              translate("Right Mouse")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFSwipeRight,
-                              translate("Double Tap & Move"),
-                              translate("Mouse Drag")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFThreeFingers,
-                              translate("Three-Finger vertically"),
-                              translate("Mouse Wheel")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGestureFDrag,
-                              translate("Two-Finger Move"),
-                              translate("Canvas Move")),
-                          GestureInfo(
-                              width,
-                              GestureIcons.iconGesturePinch,
-                              translate("Pinch to Zoom"),
-                              translate("Canvas Zoom")),
-                        ],
+                  children: _gestureTiles(width),
                 )),
               ],
             )));
