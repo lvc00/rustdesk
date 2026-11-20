@@ -101,17 +101,26 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
   static const double _dragSlop = 4.0;
   static const double _scrollStep = 24.0;
 
-  /// Span change ratio that flips a two finger gesture into pinch mode. The
-  /// stock logic used ~1.5% (min 1px), so any wobble while scrolling was
-  /// mistaken for a pinch, which then left `scale` above 1 and turned every
-  /// later two finger move into a canvas pan.
-  static const double _pinchRate = 0.06;
+  /// Minimum total change of the finger span (logical px) before a two finger
+  /// gesture may be called a pinch. Below this it is just finger jitter.
+  static const double _pinchSpanPx = 10.0;
+
+  /// A pinch means the span grows/shrinks faster than the focal point travels.
+  /// Comparing the two is what makes a *slow* pinch work; the old version used
+  /// a per-frame span ratio (6%), which a normal pinch never reaches in one
+  /// frame, so the gesture was locked as scroll before zoom could start.
+  static const double _pinchDominance = 0.65;
+
+  /// Once a gesture was locked as scroll/pan it may still be taken over by a
+  /// pinch, but only when the fingers clearly spread — this keeps zoom alive
+  /// for the rest of the gesture instead of dying with the first 100ms.
+  static const double _pinchEscapePx = 26.0;
 
   /// Only allow two finger panning when the canvas is clearly zoomed in.
   static const double _panMinScale = 1.12;
 
   /// How long to observe before locking a two finger gesture as scroll/pan.
-  static const int _twoModeLockMs = 70;
+  static const int _twoModeLockMs = 110;
 
   final Map<int, Offset> _pointers = <int, Offset>{};
 
@@ -126,6 +135,15 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
   double _moved = 0;
   double _scrollAccum = 0;
   double _lastSpan = 0;
+
+  /// Span between the two fingers when the two finger gesture started, used to
+  /// apply the zoom that happened before the mode was decided.
+  double _spanStart = 0;
+
+  /// Accumulated |d span| and focal travel since the two finger gesture began.
+  /// Their ratio decides pinch vs scroll/pan.
+  double _spanTravel = 0;
+  double _focalTravel = 0;
   bool _dragActive = false;
   bool _dragPrimed = false;
   bool _longPressed = false;
@@ -269,6 +287,9 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
     _longPressTimer?.cancel();
     _lastFocal = _focalPoint();
     _lastSpan = _span();
+    _spanStart = _lastSpan;
+    _spanTravel = 0;
+    _focalTravel = 0;
     _twoStartTs = _now;
     _twoMode = _TwoMode.undecided;
     _scrollAccum = 0;
@@ -320,16 +341,42 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
     _lastFocal = focal;
 
     final span = _span();
-    final spanRate = _lastSpan > 1.0 ? (span - _lastSpan).abs() / _lastSpan : 0.0;
-    final ratio = _lastSpan > 1.0 ? span / _lastSpan : 1.0;
+    final prev = _lastSpan;
+    final ratio = prev > 1.0 ? span / prev : 1.0;
+    final dSpan = prev > 0 ? (span - prev).abs() : 0.0;
     _lastSpan = span;
     _moved += deltaDistance;
 
-    if (_twoMode == _TwoMode.undecided) {
-      if (spanRate > _pinchRate) {
+    _focalTravel += Offset(dx, dy).distance;
+    _spanTravel += dSpan;
+
+    // Decide the mode from what dominates the gesture instead of from a single
+    // frame's span ratio: if the fingers spread/reduce clearly faster than the
+    // pair travels, it is a pinch; otherwise it is a scroll (or a canvas pan
+    // when the picture is already zoomed). The decision is re-evaluated until
+    // a pinch wins, and a pinch never falls back — so a slow pinch still zooms
+    // and a scroll can no longer turn into a canvas drag halfway through.
+    if (_twoMode != _TwoMode.pinch) {
+      final pinchLike = _spanTravel > _pinchSpanPx &&
+          _spanTravel > _focalTravel * _pinchDominance;
+      // Take over a gesture that was already locked as scroll/pan once the
+      // fingers clearly spread (zoom used to stay dead for the whole gesture).
+      final escape = _twoMode != _TwoMode.undecided &&
+          _spanTravel > _pinchEscapePx &&
+          _spanTravel > _focalTravel * 1.2;
+      if (pinchLike || escape) {
         _twoMode = _TwoMode.pinch;
         _scrollAccum = 0;
-      } else if (_now - _twoStartTs > _twoModeLockMs) {
+        // Apply the zoom accumulated before the mode was decided, otherwise a
+        // slow pinch would start zooming only from the moment it was detected.
+        final pending = _spanStart > 1.0 ? span / _spanStart : 1.0;
+        if (pending > 0.8 && pending < 1.25 && (pending - 1).abs() > 0.01) {
+          canvasModel.updateScale(pending, focal + _globalOffset);
+        }
+        return;
+      }
+      if (_twoMode == _TwoMode.undecided &&
+          _now - _twoStartTs > _twoModeLockMs) {
         // Lock as scroll/pan. Only a clearly zoomed canvas may be panned, so a
         // slightly drifted scale value never steals the scroll gesture.
         _twoMode =
@@ -430,6 +477,9 @@ class _RawTrackpadLayerState extends State<RawTrackpadLayer> {
     _moved = 0;
     _scrollAccum = 0;
     _lastSpan = 0;
+    _spanStart = 0;
+    _spanTravel = 0;
+    _focalTravel = 0;
     _lastFocal = Offset.zero;
   }
 
