@@ -234,9 +234,25 @@ jobs:
           sed -i "s/signingConfigs.release/signingConfigs.debug/g" android/app/build.gradle
           sed -i "s/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g" android/gradle.properties
           grep -n "signingConfig" android/app/build.gradle || true
+          # Flutter sometimes ends the CLI with a ToolExit (rc=2) after printing
+          # "Built ..." because of its file watcher ("Already watching path").
+          # The APK is fine in that case, so judge by the artifact instead of the
+          # exit code - but only after wiping stale outputs, so a real compile
+          # error cannot be masked by a cached APK from an earlier step.
+          rm -rf build/app/outputs/flutter-apk/*.apk 2>/dev/null || true
+          set +e
           flutter build apk --release --target-platform "$T" --split-per-abi 2>&1 | tee /tmp/build.log
-          ls -l build/app/outputs/flutter-apk/
-          test -f "build/app/outputs/flutter-apk/$OUT"
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "flutter build exit code: $RC"
+          ls -l build/app/outputs/flutter-apk/ || true
+          if [ ! -f "build/app/outputs/flutter-apk/$OUT" ]; then
+            echo "=== BUILD FAILED: APK was not produced ==="
+            tail -150 /tmp/build.log
+            exit 1
+          fi
+          echo "APK produced: $OUT (flutter rc=$RC)"
+          grep -a "RawTrackpadLayer" /tmp/build.log | head -5 || true
 
       - name: Verify P1 code is inside the APK
         shell: bash
