@@ -80,7 +80,7 @@ class _GestureHelpState extends State<GestureHelp> {
       GestureInfo(width, GestureIcons.iconMobileTouch, '单指轻点', '鼠标左键'),
       GestureInfo(width, GestureIcons.iconGesturePressHold, '单指长按', '鼠标右键'),
       GestureInfo(width, GestureIcons.iconGestureFSwipeRight, '单指滑动', '移动光标'),
-      GestureInfo(width, GestureIcons.iconGestureFDrag, '双击后拖动', '拖拽窗口/文件'),
+      GestureInfo(width, GestureIcons.iconGestureFDrag, '长按后拖动', '拖拽窗口/文件'),
       GestureInfo(width, GestureIcons.iconGestureFDragUpDown_, '双指上下滑', '滚轮滚动'),
       GestureInfo(width, GestureIcons.iconGesturePinch, '双指捏合', '缩放画面'),
       GestureInfo(width, GestureIcons.iconGestureFDragUpDown_, '双指拖动', '平移画面（放大后）'),
