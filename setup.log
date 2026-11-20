@@ -1,0 +1,100 @@
+== probe ==
+git version 2.56.1
+Python 3.10.12
+uiux raw_trackpad 200
+uiux remote_input 200
+uiux build wf 200
+tag ffi.kt 200
++ rm -rf up
++ mkdir up
++ cd up
++ git init -q .
++ git remote add src https://github.com/rustdesk/rustdesk.git
++ git fetch --depth 1 src refs/tags/1.5.3
+From https://github.com/rustdesk/rustdesk
+ * tag               1.5.3      -> FETCH_HEAD
++ git checkout FETCH_HEAD
+Note: switching to 'FETCH_HEAD'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+HEAD is now at 95cca3f fix(macos): turn privacy mode off before locking at session end (#16729)
++ git rev-parse --short HEAD
+95cca3f
++ git checkout --orphan ui-ux-153
+Switched to a new branch 'ui-ux-153'
++ set +x
++ cd up
++ RAW=https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux
++ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o flutter/lib/common/widgets/raw_trackpad.dart https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux/flutter/lib/common/widgets/raw_trackpad.dart
++ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o flutter/lib/common/widgets/remote_input.dart https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux/flutter/lib/common/widgets/remote_input.dart
++ sed -i 's#^        return RawTrackpadLayer($#    return RawTrackpadLayer(#' flutter/lib/common/widgets/remote_input.dart
++ set +x
+--- local sizes ---
+  229 flutter/lib/common/widgets/raw_trackpad.dart
+  686 flutter/lib/common/widgets/remote_input.dart
+  915 total
+  SessionID get sessionId => ffi.sessionId;
+  bool get canvasLocked => isMobile && ffi.canvasModel.locked;
+
+  @override
+  Widget build(BuildContext context) {
+    return RawTrackpadLayer(
+      ffi: ffi,
+      handleTouch: handleTouch,
+      child: widget.child,
+      nativeGestures: makeGestures(context),
+1:import 'package:flutter_hbb/common/widgets/raw_trackpad.dart';
++ cd up
++ RAW=https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux
++ rm -rf .github/workflows
++ mkdir -p .github/workflows
++ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o .github/workflows/android-build2.yml https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux/.github/workflows/android-build2.yml
++ sed -i 's#^      - ui-ux$#      - ui-ux-153#' .github/workflows/android-build2.yml
++ sed -i 's#^          git init -q \.$#          A=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk 2>/dev/null | head -1); if [ -n "$A" ]; then cp "$A" ./rustdesk-ux.apk; GH_TOKEN="$TOKEN" GH_REPO=lvc00/rustdesk gh release upload ux-latest ./rustdesk-ux.apk --clobber || true; fi\n          git init -q .#' .github/workflows/android-build2.yml
++ set +x
+--- patched workflow ---
+9:      - ui-ux-153
+167:          name: rustdesk-ux-apk
+204:          A=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk 2>/dev/null | head -1); if [ -n "$A" ]; then cp "$A" ./rustdesk-ux.apk; GH_TOKEN="$TOKEN" GH_REPO=lvc00/rustdesk gh release upload ux-latest ./rustdesk-ux.apk --clobber || true; fi
+YAML OK
++ cd up
++ git config user.name ci
++ git config user.email ci@localhost
++ git add -A
++ git status --short
++ head -20
+A  .cargo/config.toml
+A  .gitattributes
+A  .github/FUNDING.yml
+A  .github/ISSUE_TEMPLATE/bug_report.yaml
+A  .github/ISSUE_TEMPLATE/config.yml
+A  .github/patches/apply_flutter_3.44_source_patches.sh
+A  .github/patches/apply_flutter_3.44_web_patches.sh
+A  .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+A  .github/scripts/sign-macos-app.sh
+A  .github/workflows/android-build2.yml
+A  .gitignore
+A  .gitmodules
+A  AGENTS.md
+A  Cargo.lock
+A  Cargo.toml
+A  Dockerfile
+A  GEMINI.md
+A  LICENCE
+A  README.md
+A  appimage/AppImageBuilder-aarch64.yml
+job=failure sha=279c0aa88e32365428f56f3ec9863b9177430093
