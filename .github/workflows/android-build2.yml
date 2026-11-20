@@ -83,11 +83,11 @@ jobs:
           D=flutter/lib/common/widgets
           # Full repo-relative paths: the gesture layer plus the two mobile UI
           # files restyled UU-style (bottom bar) and the gesture cheat sheet.
-          FILES="flutter/lib/common/widgets/raw_trackpad.dart
-flutter/lib/common/widgets/remote_input.dart
-flutter/lib/mobile/pages/remote_page.dart
-flutter/lib/mobile/widgets/gesture_help.dart"
-          for f in $FILES; do
+          for f in \
+            flutter/lib/common/widgets/raw_trackpad.dart \
+            flutter/lib/common/widgets/remote_input.dart \
+            flutter/lib/mobile/pages/remote_page.dart \
+            flutter/lib/mobile/widgets/gesture_help.dart; do
             curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github.raw+json" \
@@ -222,11 +222,11 @@ flutter/lib/mobile/widgets/gesture_help.dart"
             echo "raw_trackpad useRawTrackpadLayer: $(grep -n 'useRawTrackpadLayer = ' $D/raw_trackpad.dart || true)"
           fi
           echo "=== re-apply P1 right before compile ==="
-          FILES="common/widgets/raw_trackpad.dart
-common/widgets/remote_input.dart
-mobile/pages/remote_page.dart
-mobile/widgets/gesture_help.dart"
-          for f in $FILES; do
+          for f in \
+            common/widgets/raw_trackpad.dart \
+            common/widgets/remote_input.dart \
+            mobile/pages/remote_page.dart \
+            mobile/widgets/gesture_help.dart; do
             curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
               -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github.raw+json" \
