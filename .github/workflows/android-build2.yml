@@ -183,9 +183,15 @@ jobs:
           test -n "$FOUND" || { echo "no apk found for $VER"; exit 1; }
           echo "using $FOUND"
           rm -rf /tmp/x && mkdir -p /tmp/x
-          unzip -o -q /tmp/rd.apk "lib/${ABI}/*" -d /tmp/x
+          # ONLY the Rust core plus its C++ runtime. Never libapp.so (the Dart AOT
+          # snapshot) or libflutter.so: shipping the official copies would overwrite
+          # the UI we just compiled and silently restore stock behaviour.
+          unzip -o -q /tmp/rd.apk "lib/${ABI}/librustdesk.so" "lib/${ABI}/libc++_shared.so" -d /tmp/x
           mkdir -p flutter/android/app/src/main/jniLibs/${ABI}
-          cp -v /tmp/x/lib/${ABI}/*.so flutter/android/app/src/main/jniLibs/${ABI}/
+          rm -f "flutter/android/app/src/main/jniLibs/${ABI}/libapp.so" \
+                "flutter/android/app/src/main/jniLibs/${ABI}/libflutter.so"
+          cp -v /tmp/x/lib/${ABI}/librustdesk.so /tmp/x/lib/${ABI}/libc++_shared.so \
+                flutter/android/app/src/main/jniLibs/${ABI}/
           find flutter/android/app/src/main/jniLibs -name '*.so' -exec ls -lh {} \;
           echo "--- JNI symbols in librustdesk.so ---"
           nm -D --defined-only "flutter/android/app/src/main/jniLibs/${ABI}/librustdesk.so" 2>/dev/null | grep -c 'Java_ffi_FFI_' || true
