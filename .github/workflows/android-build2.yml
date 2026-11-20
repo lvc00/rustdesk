@@ -7,6 +7,11 @@ name: Android Build v2
 # UnsatisfiedLinkError on startup. So: check out tag 1.5.3, overlay only the
 # two P1 Dart files from ui-ux, regenerate the FRB bridge from 1.5.3's own
 # src/flutter_ffi.rs, and reuse the official 1.5.3 native libs.
+#
+# The P1 files are written TWICE on purpose: once early (so codegen sees them)
+# and once immediately before `flutter build apk` (so no intermediate step can
+# revert them). A post-build gate then asserts RawTrackpadLayer really ended up
+# inside libapp.so, otherwise the run fails instead of shipping stock behaviour.
 
 on:
   push:
@@ -160,6 +165,7 @@ jobs:
             --c-output ./flutter/macos/Runner/bridge_generated.h
           cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
           ls -l flutter/lib/generated_bridge*.dart src/bridge_generated.rs
+          echo "post-codegen RawTrackpadLayer refs: $(grep -c 'RawTrackpadLayer' flutter/lib/common/widgets/remote_input.dart || true)"
 
       - name: Fetch native libs from official APK
         shell: bash
@@ -189,8 +195,31 @@ jobs:
         shell: bash
         env:
           ABI: ${{ inputs.abi || 'arm64-v8a' }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+          D=lib/common/widgets
+          echo "=== pre-build patch state ==="
+          echo "remote_input.dart RawTrackpadLayer refs: $(grep -c 'RawTrackpadLayer' $D/remote_input.dart || true)"
+          echo "remote_input.dart md5: $(md5sum $D/remote_input.dart | cut -d' ' -f1)"
+          echo "raw_trackpad.dart exists: $([ -f $D/raw_trackpad.dart ] && echo yes || echo no)"
+          if [ -f $D/raw_trackpad.dart ]; then
+            echo "raw_trackpad.dart lines: $(wc -l < $D/raw_trackpad.dart)"
+            echo "raw_trackpad useRawTrackpadLayer: $(grep -n 'useRawTrackpadLayer = ' $D/raw_trackpad.dart || true)"
+          fi
+          echo "=== re-apply P1 right before compile ==="
+          for f in raw_trackpad.dart remote_input.dart; do
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github.raw+json" \
+              "https://api.github.com/repos/$REPO/contents/flutter/$D/$f?ref=ui-ux" \
+              -o "$D/$f"
+          done
+          sed -i 's/^        return RawTrackpadLayer($/    return RawTrackpadLayer(/' $D/remote_input.dart
+          echo "after re-patch RawTrackpadLayer refs: $(grep -c 'RawTrackpadLayer' $D/remote_input.dart)"
+          echo "after re-patch raw_trackpad lines: $(wc -l < $D/raw_trackpad.dart)"
+          grep -n "import 'package:flutter_hbb/common/widgets/raw_trackpad.dart';" $D/remote_input.dart
           case "$ABI" in
             arm64-v8a)   T=android-arm64; OUT=app-arm64-v8a-release.apk ;;
             armeabi-v7a) T=android-arm;   OUT=app-armeabi-v7a-release.apk ;;
@@ -202,6 +231,20 @@ jobs:
           flutter build apk --release --target-platform "$T" --split-per-abi 2>&1 | tee /tmp/build.log
           ls -l build/app/outputs/flutter-apk/
           test -f "build/app/outputs/flutter-apk/$OUT"
+
+      - name: Verify P1 code is inside the APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk | head -1)
+          echo "apk: $APK"
+          rm -rf /tmp/chk && mkdir -p /tmp/chk
+          unzip -o -q "$APK" "lib/arm64-v8a/libapp.so" -d /tmp/chk
+          N=$(grep -ac "RawTrackpadLayer" /tmp/chk/lib/arm64-v8a/libapp.so || true)
+          echo "RawTrackpadLayer occurrences in libapp.so: $N"
+          echo "RawTouchGestureDetectorRegion occurrences: $(grep -ac 'RawTouchGestureDetectorRegion' /tmp/chk/lib/arm64-v8a/libapp.so || true)"
+          test "$N" -gt 0 || { echo "ERROR: P1 gesture code is NOT in the APK"; exit 1; }
+          echo "OK: P1 gesture layer compiled into the APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -256,11 +299,25 @@ jobs:
             flutter --version || true
             java -version 2>&1 || true
             echo
+            echo "### patch state"
+            grep -c 'RawTrackpadLayer' "$GITHUB_WORKSPACE/flutter/lib/common/widgets/remote_input.dart" 2>/dev/null || echo "remote_input missing"
+            echo
+            echo "### apk content check"
+            APK=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk 2>/dev/null | head -1)
+            if [ -n "$APK" ] && [ -f "$APK" ]; then
+              rm -rf /tmp/lgchk && mkdir -p /tmp/lgchk
+              unzip -o -q "$APK" "lib/*/libapp.so" -d /tmp/lgchk 2>/dev/null || true
+              for s in /tmp/lgchk/lib/*/libapp.so; do
+                [ -f "$s" ] || continue
+                echo "$s RawTrackpadLayer=$(grep -ac 'RawTrackpadLayer' "$s" || true)"
+              done
+            fi
+            echo
             echo "### jniLibs"
             find "$GITHUB_WORKSPACE/flutter/android/app/src/main/jniLibs" -name '*.so' -exec ls -lh {} \; || true
             echo
             echo "### build log"
-            tail -n 300 /tmp/build.log 2>/dev/null || echo "NO BUILD LOG"
+            tail -n 200 /tmp/build.log 2>/dev/null || echo "NO BUILD LOG"
           } > diag.txt
           git init -q .
           git add -A
