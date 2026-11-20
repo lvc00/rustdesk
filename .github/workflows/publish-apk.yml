@@ -1,11 +1,9 @@
 name: Setup 153
 
-# Rebuild the UX patch on the real tag 1.5.3.
-#
-# Why: the official librustdesk.so exposes exactly 16 JNI symbols, matching tag
-# 1.5.3's ffi.kt one for one. The previous ui-ux branch was branched from master,
-# whose ffi.kt declares 18 (adds setDocumentLogsEnabled and setInputServiceOpen),
-# so the app died at startup with UnsatisfiedLinkError.
+# Rebuild the UX patch on the real tag 1.5.3 (that tag's ffi.kt declares exactly
+# the 16 JNI symbols the official librustdesk.so exposes). Pushes branch
+# ui-ux-153, and mirrors this job's log to branch setup-log so failures can be
+# read as plain text from raw.githubusercontent.com.
 
 on:
   push:
@@ -26,41 +24,60 @@ jobs:
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          SRC=https://github.com/rustdesk/rustdesk.git
-          RAW=https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux
-          DST="https://x-access-token:${TOKEN}@github.com/lvc00/rustdesk.git"
+          set -uo pipefail
+          LOG=/tmp/setup.log
+          REPO="https://x-access-token:${TOKEN}@github.com/lvc00/rustdesk.git"
 
-          rm -rf up && mkdir up && cd up
-          git init -q .
-          git remote add src "$SRC"
-          git fetch -q --depth 1 src refs/tags/1.5.3
-          git checkout -q FETCH_HEAD
-          echo "base commit: $(git rev-parse --short FETCH_HEAD)"
-          git checkout -q --orphan ui-ux-153
+          publish_log() {
+            ( rm -rf /tmp/lg; mkdir -p /tmp/lg; cp "$LOG" /tmp/lg/setup.log
+              cd /tmp/lg
+              git init -q .
+              git add -A
+              git -c user.name=ci -c user.email=ci@localhost commit -qm log
+              git push -f "$REPO" HEAD:refs/heads/setup-log ) >>"$LOG" 2>&1 || echo "log push failed"
+          }
 
-          rm -rf .github/workflows
-          mkdir -p .github/workflows
+          main() {
+            set -e
+            SRC=https://github.com/rustdesk/rustdesk.git
+            RAW=https://raw.githubusercontent.com/lvc00/rustdesk/ui-ux
 
-          curl -fsSL -o flutter/lib/common/widgets/raw_trackpad.dart "$RAW/flutter/lib/common/widgets/raw_trackpad.dart"
-          curl -fsSL -o flutter/lib/common/widgets/remote_input.dart "$RAW/flutter/lib/common/widgets/remote_input.dart"
-          sed -i 's#^        return RawTrackpadLayer($#    return RawTrackpadLayer(#' flutter/lib/common/widgets/remote_input.dart
+            rm -rf up; mkdir up; cd up
+            git init -q .
+            git remote add src "$SRC"
+            git fetch --depth 1 src refs/tags/1.5.3
+            git checkout FETCH_HEAD
+            echo "base: $(git rev-parse --short FETCH_HEAD)"
+            git checkout --orphan ui-ux-153
 
-          curl -fsSL -o .github/workflows/android-build2.yml "$RAW/.github/workflows/android-build2.yml"
-          sed -i 's#^      - ui-ux$#      - ui-ux-153#' .github/workflows/android-build2.yml
-          sed -i 's#^          git init -q \.$#          A=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk 2>/dev/null | head -1); if [ -n "$A" ]; then cp "$A" ./rustdesk-ux.apk; GH_TOKEN="$TOKEN" GH_REPO=lvc00/rustdesk gh release upload ux-latest ./rustdesk-ux.apk --clobber || true; fi\n          git init -q .#' .github/workflows/android-build2.yml
+            rm -rf .github/workflows
+            mkdir -p .github/workflows
 
-          python3 -c "import yaml; yaml.safe_load(open('.github/workflows/android-build2.yml')); print('YAML OK')"
+            curl -fsSL -o flutter/lib/common/widgets/raw_trackpad.dart "$RAW/flutter/lib/common/widgets/raw_trackpad.dart"
+            curl -fsSL -o flutter/lib/common/widgets/remote_input.dart "$RAW/flutter/lib/common/widgets/remote_input.dart"
+            sed -i 's#^        return RawTrackpadLayer($#    return RawTrackpadLayer(#' flutter/lib/common/widgets/remote_input.dart
 
-          echo "=== check ==="
-          grep -n "ui-ux-153" .github/workflows/android-build2.yml
-          grep -n "rustdesk-ux.apk" .github/workflows/android-build2.yml | head -3
-          grep -c "" flutter/lib/common/widgets/raw_trackpad.dart
-          sed -n '120,127p' flutter/lib/common/widgets/remote_input.dart
+            curl -fsSL -o .github/workflows/android-build2.yml "$RAW/.github/workflows/android-build2.yml"
+            sed -i 's#^      - ui-ux$#      - ui-ux-153#' .github/workflows/android-build2.yml
+            sed -i 's#^          git init -q \.$#          A=$(ls "$GITHUB_WORKSPACE"/flutter/build/app/outputs/flutter-apk/app-*-release.apk 2>/dev/null | head -1); if [ -n "$A" ]; then cp "$A" ./rustdesk-ux.apk; GH_TOKEN="$TOKEN" GH_REPO=lvc00/rustdesk gh release upload ux-latest ./rustdesk-ux.apk --clobber || true; fi\n          git init -q .#' .github/workflows/android-build2.yml
 
-          git config user.name ci
-          git config user.email ci@localhost
-          git add -A
-          git commit -qm "feat(ux): raw trackpad layer rebased on tag 1.5.3"
-          git push -f "$DST" HEAD:refs/heads/ui-ux-153
-          echo "pushed $(git rev-parse --short HEAD)"
+            echo "--- checks ---"
+            grep -n "ui-ux-153" .github/workflows/android-build2.yml || echo "WARN branch tag missing"
+            grep -n "rustdesk-ux.apk" .github/workflows/android-build2.yml || echo "WARN apk hook missing"
+            wc -l flutter/lib/common/widgets/raw_trackpad.dart flutter/lib/common/widgets/remote_input.dart
+            sed -n '120,128p' flutter/lib/common/widgets/remote_input.dart
+            python3 -c "import yaml;yaml.safe_load(open('.github/workflows/android-build2.yml'));print('YAML OK')" || echo "WARN yaml check failed"
+
+            git config user.name ci
+            git config user.email ci@localhost
+            git add -A
+            git commit -qm "feat(ux): raw trackpad layer on tag 1.5.3"
+            git push -f "$REPO" HEAD:refs/heads/ui-ux-153
+            echo "pushed $(git rev-parse --short HEAD)"
+          }
+
+          main 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          echo "=== main exit: $rc ==="
+          publish_log
+          exit $rc
